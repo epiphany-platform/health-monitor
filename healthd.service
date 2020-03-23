@@ -1,0 +1,50 @@
+#
+# /etc/systemd/system/healthd.service
+#
+# This file is free software; you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation; either version 2.1 of the License, or
+# (at your option) any later version.
+#
+
+
+[Unit]
+Description=Epiphany Health Monitor Service healthd
+Documentation=https://github.com/epiphany-platform/epiphany/tree/feature/health-monitor/docs/design-docs/health-monitor
+
+[Install]
+Alias=health.service
+Alias=healthd.service
+
+[Service]
+Type=notify
+WatchdogSec=60
+PrivateNetwork=false
+# User=
+# Group=
+# Prevent writes to /usr, /boot, and /etc
+ProtectSystem=full
+PrivateDevices=true
+# Prevent accessing /home, /root and /run/user
+ProtectHome=read-only
+# Execute pre and post scripts as root, otherwise it does it as User=
+PermissionsStartOnly=false
+WorkingDirectory=/home/smeadows/Documents/golang/src/github.com/healthd
+# ExecStartPre=
+# ExecStartPre=
+# ExecStartPre=
+# Start main service
+ExecStart=/usr/sbin/healthd -c /home/smeadows/Documents/golang/src/github.com/healthd/healthd.yml
+# ExecStartPost=
+# Unset _WSREP_START_POSITION environment variable.
+# ExecStartPost=
+KillSignal=SIGTERM
+# Don't want to see an automated SIGKILL ever
+SendSIGKILL=no
+Restart=on-watchdog
+RestartSec=5s
+TimeoutStartSec=900
+TimeoutStopSec=900
+#
+# crash-script equalivent
+# FailureAction=
