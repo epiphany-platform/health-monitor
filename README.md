@@ -42,10 +42,12 @@ The Health Check Daemon configuration file format will be based upon YAML to pro
 
 **Controlling Service** 
  **Control whether service loads on boot**
-sudo systemctl enable healthd
-sudo systemctl disable healthd
- **See if running, uptime, view latest logs**
-sudo systemctl status
-sudo systemctl status healthd
+sudo systemctl enable healthd.
+sudo systemctl disable healthd.
+
+**See if running, uptime, view latest logs**
+sudo systemctl status.
+sudo systemctl status healthd.
+ 
  **Show syslog for service**
-journalctl --unit healthd
+journalctl --unit healthd.
