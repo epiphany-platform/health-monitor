@@ -3,7 +3,7 @@ package metric
 import (
 	"net/http"
 
-	"github.com/healthd/logger"
+	"github.com/health-monitor/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )

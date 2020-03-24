@@ -4,30 +4,33 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/healthd/channel"
+	"github.com/health-monitor/channel"
 
 	"reflect"
 	"runtime"
 	"time"
 )
 
-// TLE Timer List Element used to manage timers.
-type TLE struct {
-	Name    string        // Timer name default #default
-	Type    int           // Timer type user defined default -1
-	SubType int           // Timer subtype user defined default -1
-	Key     string        // Timer Key user defined default ""
-	C       time.Time     // Timer instance completion nanoseconds
-	chnl    reflect.Value // Channel i/o completion
-	timer   *time.Timer   // Timer Event
-	User    interface{}   // User specfied value
-}
+type (
+	// Option Function Definition
+	Option func(*TLE)
+	// TLE Timer List Element used to manage timers.
+	TLE struct {
+		Name    string        // Timer name default #default
+		Type    int           // Timer type user defined default -1
+		SubType int           // Timer subtype user defined default -1
+		Key     string        // Timer Key user defined default ""
+		C       time.Time     // Timer instance completion nanoseconds
+		chnl    reflect.Value // Channel i/o completion
+		timer   *time.Timer   // Timer Event
+		User    interface{}   // User specfied value
+	}
+)
 
-// Completion case statement type
-const Completion = "*timer.TLE"
-
-// Option Function Definition
-type Option func(*TLE)
+const (
+	// Completion case statement type
+	Completion = "*timer.TLE"
+)
 
 // Init initialize TLE with defaults, return address to caller
 func (t *TLE) Init() *TLE {

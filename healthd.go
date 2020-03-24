@@ -4,14 +4,14 @@ import (
 	"flag"
 	"os"
 
-	"github.com/healthd/channel"
-	"github.com/healthd/conf"
-	"github.com/healthd/docker"
-	"github.com/healthd/http"
-	"github.com/healthd/logger"
-	"github.com/healthd/metric"
-	daemon "github.com/healthd/notify"
-	"github.com/healthd/timer"
+	"github.com/health-monitor/channel"
+	"github.com/health-monitor/conf"
+	"github.com/health-monitor/docker"
+	"github.com/health-monitor/http"
+	"github.com/health-monitor/logger"
+	"github.com/health-monitor/metric"
+	daemon "github.com/health-monitor/notify"
+	"github.com/health-monitor/timer"
 )
 
 const (
@@ -27,6 +27,14 @@ var (
 	healthdConf = flag.String("-c", "healthd.yml", "YAML configuation file")
 )
 
+// Notify systemd startup/initialsation success
+func init() {
+	if ok, err := daemon.SdNotify(false, daemon.SdNotifyReady); !ok {
+		logger.Err(err.Error())
+		panic(err)
+	}
+}
+
 // Initial logger interface to syslog
 func init() {
 	if err := logger.Init(); err != nil {
@@ -40,15 +48,6 @@ func init() {
 		logger.Err(err.Error())
 		panic(err)
 	}
-}
-
-// Notify systemd startup/initialsation success
-func init() {
-	if ok, err := daemon.SdNotify(false, daemon.SdNotifyReady); !ok {
-		logger.Err(err.Error())
-		panic(err)
-	}
-	logger.Info("Completed initialization")
 }
 
 // Setup watch watchdog timer
@@ -80,6 +79,11 @@ func init() {
 // Run HTTP Probes
 func init() {
 	http.Run()
+}
+
+// init completed
+func init() {
+	logger.Info("Completed initialization")
 }
 
 // Sends watchDog notify and timer setup

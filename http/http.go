@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/healthd/conf"
-	"github.com/healthd/logger"
-	"github.com/healthd/metric"
-	"github.com/healthd/timer"
+	"github.com/health-monitor/conf"
+	"github.com/health-monitor/logger"
+	"github.com/health-monitor/metric"
+	"github.com/health-monitor/timer"
 	"golang.org/x/net/http2"
 )
 
@@ -143,11 +143,11 @@ func SetTransportDefaults(t *http.Transport) *http.Transport {
 // New creates Prober that will skip TLS verification while probing.
 func New(followNonLocalRedirects bool) ProbeHTTP {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-	return NewWithTLSConfig(tlsConfig, followNonLocalRedirects)
+	return NewTLSConfig(tlsConfig, followNonLocalRedirects)
 }
 
-// NewWithTLSConfig takes tls config as parameter.
-func NewWithTLSConfig(config *tls.Config, followNonLocalRedirects bool) ProbeHTTP {
+// NewTLSConfig takes tls config as parameter.
+func NewTLSConfig(config *tls.Config, followNonLocalRedirects bool) ProbeHTTP {
 	transport := SetTransportDefaults(
 		&http.Transport{
 			TLSClientConfig:   config,
@@ -162,25 +162,36 @@ type Method interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// bounceEnabled Should we bounce this serivice daemon
+func bounceEnabled(conf *conf.Conf) bool {
+	if conf.Env.ActionFatal {
+		return true
+	}
+	armTimer(conf)
+	return false
+}
+
 // bounceService running docker daemon
 func bounceService(conf *conf.Conf) {
-	cmd := exec.Command("systemctl", "kill", "kubelet")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		logger.Err(err.Error())
-		panic(err)
-	} else {
-		logger.Info(out.String())
-		metric.IncrementRestartCount()
-		timer.Launch(
-			timer.Name(conf.Env.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(HTTPTimerType),
-			timer.SubType(httpTimerWait),
-			timer.User(conf),
-		)
+	if bounceEnabled(conf) {
+		cmd := exec.Command("systemctl", "kill", "kubelet")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		err := cmd.Run()
+		if err != nil {
+			logger.Err(err.Error())
+			panic(err)
+		} else {
+			logger.Info(out.String())
+			metric.IncrementRestartCount()
+			timer.Launch(
+				timer.Name(conf.Env.Name),
+				timer.Timeout(conf.Env.Interval),
+				timer.Type(HTTPTimerType),
+				timer.SubType(httpTimerWait),
+				timer.User(conf),
+			)
+		}
 	}
 }
 
@@ -194,8 +205,8 @@ func restartService(conf *conf.Conf) {
 			conf.Env.Name,
 			conf.Env.Package,
 			conf.Env.Retries,
-			conf.RetryCounter),
-		)
+			conf.RetryCounter,
+		))
 		bounceService(conf)
 	} else {
 		timer.Launch(
@@ -221,8 +232,12 @@ func armTimer(conf *conf.Conf) {
 // Client create and initiate HTTP check.
 func (p ProbeHTTP) Client(conf *conf.Conf) (err error) {
 	err = ProbeURL(
-		EncodeURL("HTTP", conf.Env.IP, conf.Env.Port, conf.Env.Path),
-		"http",
+		EncodeURL(
+			strings.ToUpper(conf.Env.Package),
+			conf.Env.IP,
+			conf.Env.Port,
+			conf.Env.Path),
+		strings.ToLower(conf.Env.Package),
 		&http.Client{
 			Timeout:       time.Duration(conf.Env.Interval) * time.Second,
 			Transport:     p.transport,
@@ -275,17 +290,11 @@ func redirects(followRedirects bool) func(*http.Request, []*http.Request) error 
 
 // Run launch specified client timer(s)
 func Run() {
-	for _, conf := range conf.Confs {
-		if strings.EqualFold(conf.Env.Package, httpPackage) {
-			timer.Launch(
-				timer.Name(conf.Env.Name),
-				timer.Timeout(conf.Env.Interval),
-				timer.Type(HTTPTimerType),
-				timer.SubType(httpTimerSubtype),
-				timer.User(conf),
-			)
-		}
-	}
+	conf.Run(
+		httpPackage,
+		HTTPTimerType,
+		httpTimerSubtype,
+	)
 }
 
 // Probe specified HTTP endpoint

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/healthd/logger"
+	"github.com/health-monitor/logger"
 )
 
 const (
