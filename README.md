@@ -20,7 +20,11 @@ The Health Check Daemon will implements Linux D-Bus IPC framework protocol (sd\_
 
 **healthd.service** 
 
-You should copy your healthd.service file to /etc/systemd/system. Do not symlink it. One, you can't run systemctl enable because you it will not follow a symlink. Two, it potentially opens up a security risk.
+You should copy your healthd.service file to /etc/systemd/system. Do not symlink it. One, you can't run systemctl enable because you it will not follow a symlink. Two, it potentially opens up a security risk. 
+
+ExecStart specified the program and arguments to execute when the service is started. healthd should be copied into direftory /usr/sbin and the directory where the healthd.ymp should be specified.
+
+ExecStart=/usr/sbin/healthd -c /home/smeadows/Documents/golang/src/github.com/healthd/healthd.yml
 
 **healthd.yml**  **Config**
 
@@ -42,12 +46,15 @@ The Health Check Daemon configuration file format will be based upon YAML to pro
 
 **Controlling Service** 
  **Control whether service loads on boot**
+
 sudo systemctl enable healthd.
 sudo systemctl disable healthd.
 
 **See if running, uptime, view latest logs**
+
 sudo systemctl status.
 sudo systemctl status healthd.
  
  **Show syslog for service**
+
 journalctl --unit healthd.
