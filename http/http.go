@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/health-monitor/conf"
-	"github.com/health-monitor/logger"
-	"github.com/health-monitor/metric"
-	"github.com/health-monitor/timer"
+	"github.com/healthd/conf"
+	"github.com/healthd/logger"
+	"github.com/healthd/metric"
+	"github.com/healthd/timer"
 	"golang.org/x/net/http2"
 )
 
@@ -143,11 +143,11 @@ func SetTransportDefaults(t *http.Transport) *http.Transport {
 // New creates Prober that will skip TLS verification while probing.
 func New(followNonLocalRedirects bool) ProbeHTTP {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-	return NewTLSConfig(tlsConfig, followNonLocalRedirects)
+	return NewWithTLSConfig(tlsConfig, followNonLocalRedirects)
 }
 
-// NewTLSConfig takes tls config as parameter.
-func NewTLSConfig(config *tls.Config, followNonLocalRedirects bool) ProbeHTTP {
+// NewWithTLSConfig takes tls config as parameter.
+func NewWithTLSConfig(config *tls.Config, followNonLocalRedirects bool) ProbeHTTP {
 	transport := SetTransportDefaults(
 		&http.Transport{
 			TLSClientConfig:   config,
@@ -162,44 +162,34 @@ type Method interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// bounceEnabled Should we bounce this serivice daemon
-func bounceEnabled(conf *conf.Conf) bool {
-	if conf.Env.ActionFatal {
-		return true
-	}
-	armTimer(conf)
-	return false
-}
-
 // bounceService running docker daemon
 func bounceService(conf *conf.Conf) {
-	if bounceEnabled(conf) {
-		cmd := exec.Command("systemctl", "kill", "kubelet")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		err := cmd.Run()
-		if err != nil {
-			logger.Err(err.Error())
-			panic(err)
-		} else {
+	cmd := exec.Command("systemctl", "kill", "kubelet")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		logger.Err(err.Error())
+		panic(err)
+	} else {
+		if len(out.String()) > 0 {
 			logger.Info(out.String())
-			metric.IncrementRestartCount()
-			timer.Launch(
-				timer.Name(conf.Env.Name),
-				timer.Timeout(conf.Env.Interval),
-				timer.Type(HTTPTimerType),
-				timer.SubType(httpTimerWait),
-				timer.User(conf),
-			)
 		}
+		metric.IncrementRestartCount()
+		timer.Launch(
+			timer.Name(conf.Env.Name),
+			timer.Timeout(conf.Env.Interval),
+			timer.Type(HTTPTimerType),
+			timer.SubType(httpTimerWait),
+			timer.User(conf),
+		)
 	}
 }
 
 // serviceRestart Check whether service needs restarting
 func restartService(conf *conf.Conf) {
-	conf.RetryCounter++
+	incCounter(conf)
 	if conf.RetryCounter > conf.Env.Retries {
-		conf.RetryCounter = 0
 		logger.Warning(fmt.Sprintf(
 			"Name: %s Package: %s Retries Exceeded Max: %d Curr: %d",
 			conf.Env.Name,
@@ -207,6 +197,7 @@ func restartService(conf *conf.Conf) {
 			conf.Env.Retries,
 			conf.RetryCounter,
 		))
+		conf.RetryCounter = 0
 		bounceService(conf)
 	} else {
 		timer.Launch(
@@ -261,6 +252,7 @@ func ProbeURL(url *url.URL, method string, client Method, response string) error
 	}
 
 	defer res.Body.Close()
+
 	if !strings.Contains(res.Status, response) {
 		return fmt.Errorf(res.Status)
 	}
@@ -297,17 +289,36 @@ func Run() {
 	)
 }
 
+func resetCounter(conf *conf.Conf) {
+	conf.RetryCounter = 0
+}
+
+func incCounter(conf *conf.Conf) {
+	conf.RetryCounter++
+}
+
+// textedStatus check error text
+func textedStatus(err error) bool {
+	if strings.Contains(err.Error(), "connection refused") {
+		return true
+	}
+	return false
+}
+
 // Probe specified HTTP endpoint
 func Probe(tle *timer.TLE) {
-	if conf, ok := tle.User.(*conf.Conf); ok {
-		p := New(false)
-		if err := p.Client(conf); err != nil {
-			metric.SetKubeletMetric(0)
+	conf, _ := tle.User.(*conf.Conf)
+	p := New(false)
+	if err := p.Client(conf); err == nil {
+		metric.SetKubeletMetric(1)
+		resetCounter(conf)
+		armTimer(conf)
+	} else {
+		metric.SetKubeletMetric(0)
+		if !textedStatus(err) {
 			logger.Warning(err.Error())
 			restartService(conf)
 		} else {
-			metric.SetKubeletMetric(1)
-			conf.RetryCounter = 0
 			armTimer(conf)
 		}
 	}
