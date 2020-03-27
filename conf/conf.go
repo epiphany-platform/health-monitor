@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/health-monitor/logger"
-	"github.com/health-monitor/timer"
+	"github.com/healthd/logger"
+	"github.com/healthd/timer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,12 +23,12 @@ type (
 			Name        string `yaml:"Name"`
 			Package     string `yaml:"Package"`
 			ActionFatal bool   `yaml:"ActionFatal"`
-			IP          string `yaml:"IP"`
+			IP          string `yaml:"IP,omitempty"`
 			Interval    int    `yaml:"Interval"`
-			Path        string `yaml:"Path"`
-			Port        int    `yaml:"Port"`
+			Path        string `yaml:"Path,omitempty"`
+			Port        int    `yaml:"Port,omitempty"`
 			RequestType string `yaml:"RequestType"`
-			Response    string `yaml:"Response"`
+			Response    string `yaml:"Response,omitempty"`
 			Retries     int    `yaml:"Retries"`
 			RetryDelay  int    `yaml:"RetryDelay"`
 		} `yaml:"Env"`
@@ -75,6 +75,7 @@ func Exist(Name string) (int, bool) {
 	return -1, false
 }
 
+
 // IsNormalize ensure conf consistency
 func IsNormalize(conf *Conf) error {
 	if conf.Env.Name == "" {
@@ -86,11 +87,11 @@ func IsNormalize(conf *Conf) error {
 	if !(conf.Env.Retries >= 3 && conf.Env.Retries <= 10) {
 		return errors.New("YAML Retries out-of-range")
 	}
-	if !(conf.Env.Interval >= 10 && conf.Env.Interval <= 59) {
+	if !(conf.Env.Interval >= 5 && conf.Env.Interval <= 59) {
 		return errors.New("YAML Interval out-of-range")
 	}
 
-	if !(conf.Env.RetryDelay >= 5 && conf.Env.RetryDelay <= 15) {
+	if !(conf.Env.RetryDelay >= 5 && conf.Env.RetryDelay <= 30) {
 		return errors.New("YAML RetryDelay out-of-range")
 	}
 	if strings.EqualFold("http", conf.Env.Package) {
