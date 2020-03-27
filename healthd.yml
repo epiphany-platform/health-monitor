@@ -2,10 +2,7 @@ Env:
     Name: Docker-1
     Package: docker
     ActionFatal: true
-    IP: "127.0.0.1"
     Interval: 30
-    Path: "/"
-    Port: 8080
     RequestType: HEAD
     Response: 200
     Retries: 3
