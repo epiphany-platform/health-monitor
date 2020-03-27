@@ -2,7 +2,7 @@
 
 Daemon implementing health check monitor probes for Epiphany platform.
 
-**Health Checks**
+**Health Monitor**
 
 Health checks are a means of regularly monitoring the health of individual components within the Epiphany environment. These monitoring probes checks the liveness of containers, services, processes at specified intervals and, in the event of an unhealthy object take predefined action.
 
@@ -10,7 +10,7 @@ Health checks are a means of regularly monitoring the health of individual compo
 
 healthd is an Epiphany Linux based service process providing health check probes, this process is instantiated at system startup, managed and supervised by the service manager (Systemd), and runs unobtrusively in the background throughout its lifecycle. Initial support will be provided for the following Linux based distros:
 
-- CentOS 9
+- CentOS 8
 - Ubuntu 18.04
 - Redhat 7.6
 
