@@ -22,9 +22,15 @@ The Health Check Daemon will implements Linux D-Bus IPC framework protocol (sd\_
 
 You should copy your healthd.service file to /etc/systemd/system. Do not symlink it. One, you can't run systemctl enable because you it will not follow a symlink. Two, it potentially opens up a security risk. 
 
-ExecStart specifies the program and arguments to execute when the service is started. healthd should be copied into direftory /usr/sbin and healthd.yml copied into directory /etc/healthd.yml.
+ExecStart specifies the program and arguments to execute when the service is started. healthd should be copied into directory /usr/sbin and healthd.yml copied into directory /etc/healthd.yml.
 
-ExecStart=/usr/sbin/healthd -c /etc/healthd/healthd.yml
+ExecStart=/usr/sbin/healthd -c /etc/healthd/healthd.yml -p 2112
+
+**flags**
+
+-c Location healthd.yml
+
+-p Prometheus port number used to scrape service
 
 **healthd.yml**  **Config**
 
