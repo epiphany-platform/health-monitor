@@ -3,14 +3,12 @@ package metric
 import (
 	"net/http"
 
-	"github.com/health-monitor/logger"
+	"github.com/healthd/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
-	registry *prometheus.Registry
-
 	isDockerRunning = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "is_docker_running",
@@ -32,10 +30,15 @@ var (
 )
 
 func init() {
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(isDockerRunning)
-	registry.MustRegister(isKubeletRunning)
-	registry.MustRegister(restartCount)
+	prometheus.MustRegister(isDockerRunning)
+	prometheus.MustRegister(isKubeletRunning)
+	if err := prometheus.Register(restartCount); err != nil {
+		logger.Warning(err.Error())
+		panic(err)
+	}
+	isDockerRunning.Set(0)
+	isKubeletRunning.Set(0)
+	restartCount.Inc()
 }
 
 // SetDockerMetric deletes all metrics in this vector.
@@ -54,10 +57,12 @@ func IncrementRestartCount() {
 }
 
 // Run expose metrics to prometheus.
-func Run() {
+func Run(port *string) {
 	go func() {
-		handler := http.NewServeMux()
-		handler.	Handle("/metrics", promhttp.Handler())
-		logger.Err(http.ListenAndServe(":2112", nil).Error())
+		http.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(":"+*port, nil); err != nil {
+			logger.Err(err.Error())
+			panic(err)
+		}
 	}()
 }
