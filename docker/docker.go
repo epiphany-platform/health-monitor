@@ -5,13 +5,14 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
-	"github.com/health-monitor/conf"
-	"github.com/health-monitor/logger"
-	"github.com/health-monitor/metric"
-	"github.com/health-monitor/timer"
+	"github.com/healthd/conf"
+	"github.com/healthd/logger"
+	"github.com/healthd/metric"
+	"github.com/healthd/timer"
 )
 
 const (
@@ -26,37 +27,26 @@ const (
 	dockerTimerWait = 2004
 )
 
-// bounceEnabled Should we bounce this serivice daemon
-func bounceEnabled(conf *conf.Conf) bool {
-	if conf.Env.ActionFatal {
-		return true
-	}
-	armTimer(conf)
-	return false
-}
-
 // restartService running docker daemon
 func restartService(conf *conf.Conf) {
-	if bounceEnabled(conf) {
-		cmd := exec.Command("pkill", "-SIGUSR1", "dockerd")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		err := cmd.Run()
-		if err != nil {
-			logger.Err(err.Error())
-			panic(err)
-		} else {
-			logger.Info(out.String())
-			metric.IncrementRestartCount()
-			timer.Launch(
-				timer.Name(conf.Env.Name),
-				timer.Timeout(conf.Env.Interval),
-				timer.Type(DockerTimerType),
-				timer.SubType(dockerTimerWait),
-				timer.User(conf),
-			)
-		}
+	cmd := exec.Command("pkill", "-SIGUSR1", "dockerd")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		logger.Err(err.Error())
 	}
+	if len(out.String()) > 0 {
+		logger.Info(out.String())
+	}
+	metric.IncrementRestartCount()
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.Interval),
+		timer.Type(DockerTimerType),
+		timer.SubType(dockerTimerWait),
+		timer.User(conf),
+	)
 }
 
 // Run launch specified client
@@ -91,35 +81,55 @@ func retryOperation(tle *timer.TLE) {
 	}
 }
 
-func armTimer(conf *conf.Conf) {
-	timer.Launch(
-		timer.Name(conf.Env.Name),
-		timer.Timeout(conf.Env.Interval),
-		timer.Type(DockerTimerType),
-		timer.SubType(dockerTimerSubtype),
-		timer.User(conf),
-	)
+func armTimer(tle *timer.TLE) {
+	if conf, ok := tle.User.(*conf.Conf); ok {
+		timer.Launch(
+			timer.Name(tle.Name),
+			timer.Timeout(conf.Env.Interval),
+			timer.Type(tle.Type),
+			timer.SubType(tle.SubType),
+			timer.User(conf),
+			timer.Key(tle.Key),
+		)
+	}
 }
 
-// Probe running containers
+// probeDocker running containers
+func probeDocker(tle *timer.TLE) error {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	_, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
+	return err
+
+}
+
+// resetCounter retry counter 
+func resetCounter(conf *conf.Conf) {
+	conf.RetryCounter = 0
+}
+
+// incCounter increment retry counter 
+func incCounter(conf *conf.Conf) {
+	conf.RetryCounter++
+}
+
+// Probe specified docker HTTP endpoint
 func Probe(tle *timer.TLE) {
-	if conf, ok := tle.User.(*conf.Conf); ok {
-		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-		if err != nil {
-			logger.Err(err.Error())
-			metric.SetDockerMetric(1)
-			retryOperation(tle)
-			return
-		}
-		_, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
-		if err != nil {
-			logger.Err(err.Error())
-			metric.SetDockerMetric(0)
-			retryOperation(tle)
-			return
-		}
+	conf, _ := tle.User.(*conf.Conf)
+	if err := probeDocker(tle); err == nil {
 		metric.SetDockerMetric(1)
-		conf.RetryCounter = 0
-		armTimer(conf)
+		resetCounter(conf)
+		armTimer(tle)
+	} else {
+		metric.SetDockerMetric(0)
+		if !strings.Contains(
+			strings.ToLower(err.Error()), "cannot connect to the docker daemon") {
+			logger.Warning(err.Error())
+			restartService(conf)
+		} else {
+			armTimer(tle)
+		}
 	}
 }
