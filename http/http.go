@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/healthd/conf"
-	"github.com/healthd/logger"
-	"github.com/healthd/metric"
-	"github.com/healthd/timer"
+	"github.com/epiphany-platform/health-monitor/conf"
+	"github.com/epiphany-platform/health-monitor/logger"
+	"github.com/epiphany-platform/health-monitor/metric"
+	"github.com/epiphany-platform/health-monitor/timer"
 	"golang.org/x/net/http2"
 )
 
@@ -38,11 +38,11 @@ const (
 	httpPackage = "http"
 	// HTTPTimerType must be unique across probes
 	HTTPTimerType = 3001
-	// dockerTimerSubtype normal processing probes
+	// httpTimerSubtype normal processing probes
 	httpTimerSubtype = 3002
 	// HTTPTimerRetry Retry logic enabled
 	httpTimerRetry = 3003
-	// httpTimerWait Wail docker daemon recovers
+	// httpTimerWait Wail HTTP daemon recovers
 	httpTimerWait = 3004
 )
 
@@ -162,27 +162,38 @@ type Method interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// bounceService running docker daemon
+// bounceService running http daemon
 func bounceService(conf *conf.Conf) {
-	cmd := exec.Command("systemctl", "kill", "kubelet")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		logger.Err(err.Error())
-		panic(err)
+	if !conf.Env.ActionFatal {
+		resetCounter(conf)
+		armTimer(conf)
 	} else {
-		if len(out.String()) > 0 {
-			logger.Info(out.String())
+		cmd := exec.Command("systemctl", "restart", "kubelet")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		err := cmd.Run()
+		if err != nil {
+			logger.Err(err.Error())
+			panic(err)
+		} else {
+			if len(out.String()) > 0 {
+				logger.Info(out.String())
+			} else {
+				logger.Info(fmt.Sprintf(
+					"Restarted Name: %s Service: %s Completed",
+					conf.Env.Name,
+					conf.Env.Package,
+				))
+			}
+			metric.IncrementRestartCount()
+			timer.Launch(
+				timer.Name(conf.Env.Name),
+				timer.Timeout(conf.Env.Interval),
+				timer.Type(HTTPTimerType),
+				timer.SubType(httpTimerWait),
+				timer.User(conf),
+			)
 		}
-		metric.IncrementRestartCount()
-		timer.Launch(
-			timer.Name(conf.Env.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(HTTPTimerType),
-			timer.SubType(httpTimerWait),
-			timer.User(conf),
-		)
 	}
 }
 
@@ -191,13 +202,13 @@ func restartService(conf *conf.Conf) {
 	incCounter(conf)
 	if conf.RetryCounter > conf.Env.Retries {
 		logger.Warning(fmt.Sprintf(
-			"Name: %s Package: %s Retries Exceeded Max: %d Curr: %d",
+			"Bouncing %s Service %s Exceeded Retry attempts Cur: %d Max: %d",
 			conf.Env.Name,
 			conf.Env.Package,
-			conf.Env.Retries,
 			conf.RetryCounter,
+			conf.Env.Retries,
 		))
-		conf.RetryCounter = 0
+		resetCounter(conf)
 		bounceService(conf)
 	} else {
 		timer.Launch(
@@ -207,6 +218,13 @@ func restartService(conf *conf.Conf) {
 			timer.SubType(httpTimerRetry),
 			timer.User(conf),
 		)
+		logger.Info(fmt.Sprintf(
+			"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
+			conf.Env.Name,
+			conf.Env.Package,
+			conf.RetryCounter,
+			conf.Env.Retries,
+		))
 	}
 }
 
@@ -230,7 +248,7 @@ func (p ProbeHTTP) Client(conf *conf.Conf) (err error) {
 			conf.Env.Path),
 		strings.ToLower(conf.Env.Package),
 		&http.Client{
-			Timeout:       time.Duration(conf.Env.Interval) * time.Second,
+			Timeout:       time.Duration(conf.Env.Interval/2) * time.Second,
 			Transport:     p.transport,
 			CheckRedirect: redirects(p.followNonLocalRedirects),
 		},
@@ -243,18 +261,24 @@ func (p ProbeHTTP) Client(conf *conf.Conf) (err error) {
 func ProbeURL(url *url.URL, method string, client Method, response string) error {
 	req, err := http.NewRequest(method, url.String(), nil)
 	if err != nil {
+		logger.Info(err.Error())
 		return err
 	}
 
 	res, err := client.Do(req)
 	if err != nil {
+		if !strings.Contains(err.Error(), "connection refused") {
+			logger.Info(err.Error())
+		}
 		return err
 	}
 
 	defer res.Body.Close()
 
 	if !strings.Contains(res.Status, response) {
-		return fmt.Errorf(res.Status)
+		err := fmt.Errorf(res.Status)
+		logger.Info(err.Error())
+		return err
 	}
 	metric.SetKubeletMetric(1)
 	return err
@@ -315,8 +339,7 @@ func Probe(tle *timer.TLE) {
 		armTimer(conf)
 	} else {
 		metric.SetKubeletMetric(0)
-		if !textedStatus(err) {
-			logger.Warning(err.Error())
+		if !strings.Contains(err.Error(), "connection refused") {
 			restartService(conf)
 		} else {
 			armTimer(conf)
