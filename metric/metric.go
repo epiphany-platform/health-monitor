@@ -3,7 +3,7 @@ package metric
 import (
 	"net/http"
 
-	"github.com/healthd/logger"
+	"github.com/epiphany-platform/health-monitor/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -12,13 +12,13 @@ var (
 	isDockerRunning = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "is_docker_running",
-			Help: "True/False Docker running.",
+			Help: "True/False Docker daemon running.",
 		},
 	)
 	isKubeletRunning = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "is_kubelet_running",
-			Help: "True/False Prometheus Kubelet running.",
+			Help: "True/False Prometheus Kubelet daemon running.",
 		},
 	)
 	restartCount = prometheus.NewCounter(
@@ -38,7 +38,9 @@ func init() {
 	}
 	isDockerRunning.Set(0)
 	isKubeletRunning.Set(0)
-	restartCount.Inc()
+
+	//	restartCount.Inc()
+
 }
 
 // SetDockerMetric deletes all metrics in this vector.
