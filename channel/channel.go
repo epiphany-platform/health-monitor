@@ -4,13 +4,17 @@ import (
 	"reflect"
 )
 
-// Channel information block
-type channels struct {
-	usage int
-	cases []reflect.SelectCase
-}
+type (
+	// Channel information block
+	channels struct {
+		usage int
+		cases []reflect.SelectCase
+	}
+)
 
-var ccb channels
+var (
+	ccb channels
+)
 
 // Send Message on channel ch
 func Send(ch reflect.Value, message interface{}) bool {
