@@ -9,10 +9,10 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
-	"github.com/healthd/conf"
-	"github.com/healthd/logger"
-	"github.com/healthd/metric"
-	"github.com/healthd/timer"
+	"github.com/epiphany-platform/health-monitor/conf"
+	"github.com/epiphany-platform/health-monitor/logger"
+	"github.com/epiphany-platform/health-monitor/metric"
+	"github.com/epiphany-platform/health-monitor/timer"
 )
 
 const (
@@ -28,25 +28,35 @@ const (
 )
 
 // restartService running docker daemon
-func restartService(conf *conf.Conf) {
-	cmd := exec.Command("pkill", "-SIGUSR1", "dockerd")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		logger.Err(err.Error())
+func bounceService(conf *conf.Conf) {
+	if !conf.Env.ActionFatal {
+		resetCounter(conf)
+		armTimer(conf)
+	} else {
+		cmd := exec.Command("systemctl", "kill", "--kill-who=main", "docker")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			logger.Err(err.Error())
+		}
+		if len(out.String()) > 0 {
+			logger.Info(out.String())
+		} else {
+			logger.Info(fmt.Sprintf(
+				"Restarted Name: %s Service: %s Completed",
+				conf.Env.Name,
+				conf.Env.Package,
+			))
+		}
+		metric.IncrementRestartCount()
+		timer.Launch(
+			timer.Name(conf.Env.Name),
+			timer.Timeout(conf.Env.Interval),
+			timer.Type(DockerTimerType),
+			timer.SubType(dockerTimerWait),
+			timer.User(conf),
+		)
 	}
-	if len(out.String()) > 0 {
-		logger.Info(out.String())
-	}
-	metric.IncrementRestartCount()
-	timer.Launch(
-		timer.Name(conf.Env.Name),
-		timer.Timeout(conf.Env.Interval),
-		timer.Type(DockerTimerType),
-		timer.SubType(dockerTimerWait),
-		timer.User(conf),
-	)
 }
 
 // Run launch specified client
@@ -58,17 +68,20 @@ func Run() {
 	)
 }
 
+// retryOperation retry operation n times
 func retryOperation(tle *timer.TLE) {
 	conf, _ := tle.User.(*conf.Conf)
-	conf.RetryCounter++
+	incCounter(conf)
 	if conf.RetryCounter > conf.Env.Retries {
-		conf.RetryCounter = 0
+		resetCounter(conf)
 		logger.Warning(fmt.Sprintf(
-			"%s Retries Exceeded Max: %d Curr: %d",
+			"Bouncing %s Service %s Exceeded Retry attempts Cur: %d Max: %d",
 			conf.Env.Name,
+			conf.Env.Package,
+			conf.RetryCounter,
 			conf.Env.Retries,
-			conf.RetryCounter))
-		restartService(conf)
+		))
+		bounceService(conf)
 	} else {
 		timer.Launch(
 			timer.Name(conf.Env.Name),
@@ -78,20 +91,25 @@ func retryOperation(tle *timer.TLE) {
 			timer.User(conf),
 			timer.Key(tle.Key),
 		)
+		logger.Info(fmt.Sprintf(
+			"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
+			conf.Env.Name,
+			conf.Env.Package,
+			conf.RetryCounter,
+			conf.Env.Retries,
+		))
 	}
 }
 
-func armTimer(tle *timer.TLE) {
-	if conf, ok := tle.User.(*conf.Conf); ok {
-		timer.Launch(
-			timer.Name(tle.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(tle.Type),
-			timer.SubType(tle.SubType),
-			timer.User(conf),
-			timer.Key(tle.Key),
-		)
-	}
+// armTimer launch default Docker timer
+func armTimer(conf *conf.Conf) {
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.Interval),
+		timer.Type(DockerTimerType),
+		timer.SubType(dockerTimerSubtype),
+		timer.User(conf),
+	)
 }
 
 // probeDocker running containers
@@ -105,12 +123,12 @@ func probeDocker(tle *timer.TLE) error {
 
 }
 
-// resetCounter retry counter 
+// resetCounter retry counter
 func resetCounter(conf *conf.Conf) {
 	conf.RetryCounter = 0
 }
 
-// incCounter increment retry counter 
+// incCounter increment retry counter
 func incCounter(conf *conf.Conf) {
 	conf.RetryCounter++
 }
@@ -121,15 +139,15 @@ func Probe(tle *timer.TLE) {
 	if err := probeDocker(tle); err == nil {
 		metric.SetDockerMetric(1)
 		resetCounter(conf)
-		armTimer(tle)
+		armTimer(conf)
 	} else {
 		metric.SetDockerMetric(0)
 		if !strings.Contains(
 			strings.ToLower(err.Error()), "cannot connect to the docker daemon") {
 			logger.Warning(err.Error())
-			restartService(conf)
+			bounceService(conf)
 		} else {
-			armTimer(tle)
+			armTimer(conf)
 		}
 	}
 }
