@@ -2,19 +2,18 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/healthd/channel"
-	"github.com/healthd/conf"
-	"github.com/healthd/docker"
-	"github.com/healthd/http"
-	"github.com/healthd/logger"
-	"github.com/healthd/metric"
-	daemon "github.com/healthd/notify"
-	"github.com/healthd/timer"
+	"github.com/epiphany-platform/health-monitor/channel"
+	"github.com/epiphany-platform/health-monitor/conf"
+	"github.com/epiphany-platform/health-monitor/docker"
+	"github.com/epiphany-platform/health-monitor/http"
+	"github.com/epiphany-platform/health-monitor/logger"
+	"github.com/epiphany-platform/health-monitor/metric"
+	daemon "github.com/epiphany-platform/health-monitor/notify"
+	"github.com/epiphany-platform/health-monitor/timer"
 )
 
 const (
@@ -25,14 +24,13 @@ const (
 )
 
 var (
-
 	// health liveness configuration file
 	healthdConf = flag.String("-c", "healthd.yml", "YAML configuation file")
 	// health liveness prometheus port #
 	healthdPort = flag.String("-p", "2112", "Prometheus IP port #")
 )
 
-// Notify systemd startup/initialsation success
+// Notify systemd startup ok
 func init() {
 	if ok, err := daemon.SdNotify(false, daemon.SdNotifyReady); !ok {
 		logger.Err(err.Error())
@@ -104,7 +102,6 @@ func init() {
 			switch <-daemonChan {
 			case syscall.SIGHUP:
 				{
-					logger.Info(fmt.Sprintf("Reloading %s ", *healthdConf))
 					daemon.SdNotify(false, daemon.SdNotifyReloading)
 					if err := conf.Load(*healthdConf); err != nil {
 						logger.Err(err.Error())
@@ -114,8 +111,17 @@ func init() {
 				}
 
 			case syscall.SIGQUIT:
+				{
+					daemon.SdNotify(false, daemon.SdNotifyStopping)
+					panic("SIGQUIT paniced process")
+				}
+
 			case syscall.SIGABRT:
 			case syscall.SIGKILL:
+				{
+					daemon.SdNotify(false, daemon.SdNotifyStopping)
+					os.Exit(1)
+				}
 			case syscall.SIGTERM:
 				{
 					daemon.SdNotify(false, daemon.SdNotifyStopping)
@@ -144,6 +150,7 @@ func watchDog(tle *timer.TLE) {
 			timer.Timeout(int(interval)),
 			timer.Type(tle.Type),
 			timer.SubType(tle.SubType),
+			timer.Key(tle.Key),
 		)
 	}
 }
@@ -173,13 +180,14 @@ func waitTimerCompletions() {
 		switch message.Type().String() {
 		case timer.Completion:
 			{
-				tle, _ := message.Interface().(*timer.TLE)
-				orchestrate(tle)
+				if tle, ok := message.Interface().(*timer.TLE); ok {
+					orchestrate(tle)
+				}
 				channel.Remove(Chosen)
 			}
 		}
 	}
-	logger.Err("Internal logic error, timer(s) NOT running.")
+	logger.Err("Internal logic error, No timer(s) are running.")
 }
 
 func main() {
