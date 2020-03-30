@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/healthd/logger"
-	"github.com/healthd/timer"
+	"github.com/epiphany-platform/health-monitor/logger"
+	"github.com/epiphany-platform/health-monitor/timer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,7 +74,6 @@ func Exist(Name string) (int, bool) {
 	}
 	return -1, false
 }
-
 
 // IsNormalize ensure conf consistency
 func IsNormalize(conf *Conf) error {
