@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"sync"
 	"time"
-	"github.com/health-monitor/channel"
+	"github.com/epiphany-platform/health-monitor/channel"
 	"github.com/google/uuid"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/health-monitor/channel"
+	"github.com/epiphany-platform/health-monitor/channel"
 
 	"reflect"
 	"runtime"
