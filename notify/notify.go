@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/health-monitor/logger"
+	"github.com/epiphany-platform/health-monitor/logger"
 )
 
 const (
@@ -100,17 +100,18 @@ func SdWatchdogEnabled(unsetEnvironment bool) (int, error) {
 
 	interval := s / 2
 
-	if wpid == "" {
-		return interval, nil
-	}
+	if wpid != "" {
 
-	p, err := strconv.Atoi(wpid)
-	if err != nil {
-		return 0, fmt.Errorf("error converting WATCHDOG_PID: %s", err)
-	}
+		p, err := strconv.Atoi(wpid)
+		if err != nil {
+			return 0, fmt.Errorf("error converting WATCHDOG_PID: %s", err)
+		}
 
-	if os.Getpid() != p {
-		return 0, nil
+		if os.Getpid() != p {
+			err := fmt.Errorf("error converting WATCHDOG_PID: %s", err)
+			logger.Err(err.Error())
+			return 0, err
+		}
 	}
 	return interval / 1000000, nil
 }
