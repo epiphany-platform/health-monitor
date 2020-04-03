@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
@@ -14,6 +18,10 @@ import (
 	"github.com/epiphany-platform/health-monitor/metric"
 	"github.com/epiphany-platform/health-monitor/timer"
 )
+// operationTimeout is the error returned when the docker operations are timeout.
+type operationTimeout struct {
+	err error
+}
 
 const (
 	dockerPackage = "docker"
@@ -27,35 +35,68 @@ const (
 	dockerTimerWait = 2004
 )
 
+// recoveryDelayTimer initiate Recovery Delay timer allow service to recover
+func recoveryDelayTimer(conf *conf.Conf) {
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.RecoveryDelay),
+		timer.Type(DockerTimerType),
+		timer.SubType(dockerTimerWait),
+		timer.User(conf),
+	)
+	logger.Info(
+		fmt.Sprintf("Service %s Probe Delayed %d secs, allowance recovery of resources.",
+			conf.Env.Name,
+			conf.Env.RecoveryDelay),
+	)
+}
+
+func dumpDockerDaemon(conf *conf.Conf) {
+	cmd := exec.Command("pkill", "-SIGUSR1", "docker")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		logger.Err(err.Error())
+	}
+	if len(out.String()) > 0 {
+		logger.Info(out.String())
+	} else {
+		logger.Info(fmt.Sprintf(
+			"Name: %s Service: %s stack dumped for investigation.",
+			conf.Env.Name,
+			conf.Env.Package,
+		))
+	}
+}
+
+func killDockerDaemon(conf *conf.Conf) {
+	cmd := exec.Command("systemctl", "kill", "--kill-who=main", "docker")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		logger.Err(err.Error())
+	}
+	if len(out.String()) > 0 {
+		logger.Info(out.String())
+	} else {
+		logger.Info(fmt.Sprintf(
+			"Name: %s Service: %s Restart Completed",
+			conf.Env.Name,
+			conf.Env.Package,
+		))
+	}
+}
+
 // restartService running docker daemon
 func bounceService(conf *conf.Conf) {
 	if !conf.Env.ActionFatal {
 		resetCounter(conf)
-		armTimer(conf)
+		recoveryDelayTimer(conf)
 	} else {
-		cmd := exec.Command("systemctl", "kill", "--kill-who=main", "docker")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
-			logger.Err(err.Error())
-		}
-		if len(out.String()) > 0 {
-			logger.Info(out.String())
-		} else {
-			logger.Info(fmt.Sprintf(
-				"Restarted Name: %s Service: %s Completed",
-				conf.Env.Name,
-				conf.Env.Package,
-			))
-		}
+		dumpDockerDaemon(conf)
+		killDockerDaemon(conf)
 		metric.IncrementRestartCount()
-		timer.Launch(
-			timer.Name(conf.Env.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(DockerTimerType),
-			timer.SubType(dockerTimerWait),
-			timer.User(conf),
-		)
+		recoveryDelayTimer(conf)
 	}
 }
 
@@ -68,12 +109,29 @@ func Run() {
 	)
 }
 
+// retryServiceTimer initiates timer to retry probe
+func retryServiceTimer(conf *conf.Conf) {
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.RetryDelay),
+		timer.Type(DockerTimerType),
+		timer.SubType(dockerTimerRetry),
+		timer.User(conf),
+	)
+	logger.Info(fmt.Sprintf(
+		"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
+		conf.Env.Name,
+		conf.Env.Package,
+		conf.RetryCounter,
+		conf.Env.Retries,
+	))
+}
+
 // retryOperation retry operation n times
-func retryOperation(tle *timer.TLE) {
-	conf, _ := tle.User.(*conf.Conf)
-	incCounter(conf)
-	if conf.RetryCounter > conf.Env.Retries {
-		resetCounter(conf)
+func restartService(conf *conf.Conf) {
+	if incCounter(conf) <= conf.Env.Retries {
+		retryServiceTimer(conf)
+	} else {
 		logger.Warning(fmt.Sprintf(
 			"Bouncing %s Service %s Exceeded Retry attempts Cur: %d Max: %d",
 			conf.Env.Name,
@@ -81,23 +139,8 @@ func retryOperation(tle *timer.TLE) {
 			conf.RetryCounter,
 			conf.Env.Retries,
 		))
+		resetCounter(conf)
 		bounceService(conf)
-	} else {
-		timer.Launch(
-			timer.Name(conf.Env.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(tle.Type),
-			timer.SubType(dockerTimerRetry),
-			timer.User(conf),
-			timer.Key(tle.Key),
-		)
-		logger.Info(fmt.Sprintf(
-			"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
-			conf.Env.Name,
-			conf.Env.Package,
-			conf.RetryCounter,
-			conf.Env.Retries,
-		))
 	}
 }
 
@@ -112,15 +155,46 @@ func armTimer(conf *conf.Conf) {
 	)
 }
 
+// EncodeURL format URL components to facilitate connection
+func EncodeURL(scheme string, host string, port int, path string) *url.URL {
+	return &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+		Path:   path,
+	}
+}
+func (e operationTimeout) Error() string {
+	return fmt.Sprintf("operation timeout: %v", e.err)
+}
+
+// contextError checks the context, and returns error if the context is timeout.
+func contextError(ctx context.Context) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		return operationTimeout{err: ctx.Err()}
+	}
+	return ctx.Err()
+}
+
 // probeDocker running containers
-func probeDocker(tle *timer.TLE) error {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+func probeDocker(conf *conf.Conf) error {
+	cli, err := client.NewClient(conf.Env.IP, "", nil, nil)
 	if err != nil {
 		return err
 	}
-	_, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
-	return err
 
+	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(conf.Env.ProtocolTimeout) * time.Second)
+	defer cancel()
+
+	cli.NegotiateAPIVersion(ctx)
+	_, err = cli.ContainerList(ctx, types.ContainerListOptions{})
+	if ctxErr := contextError(ctx); ctxErr != nil {
+		return ctxErr
+	}
+
+
+	cli.Close()
+	return err
 }
 
 // resetCounter retry counter
@@ -129,14 +203,15 @@ func resetCounter(conf *conf.Conf) {
 }
 
 // incCounter increment retry counter
-func incCounter(conf *conf.Conf) {
+func incCounter(conf *conf.Conf) int {
 	conf.RetryCounter++
+	return conf.RetryCounter
 }
 
 // Probe specified docker HTTP endpoint
 func Probe(tle *timer.TLE) {
 	conf, _ := tle.User.(*conf.Conf)
-	if err := probeDocker(tle); err == nil {
+	if err := probeDocker(conf); err == nil {
 		metric.SetDockerMetric(1)
 		resetCounter(conf)
 		armTimer(conf)
@@ -145,7 +220,7 @@ func Probe(tle *timer.TLE) {
 		if !strings.Contains(
 			strings.ToLower(err.Error()), "cannot connect to the docker daemon") {
 			logger.Warning(err.Error())
-			bounceService(conf)
+			restartService(conf)
 		} else {
 			armTimer(conf)
 		}
