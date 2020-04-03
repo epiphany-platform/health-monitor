@@ -6,9 +6,11 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/docker/docker/client"
 	"github.com/epiphany-platform/health-monitor/logger"
 	"github.com/epiphany-platform/health-monitor/timer"
 	"gopkg.in/yaml.v3"
@@ -20,24 +22,26 @@ type (
 		RetryCounter int
 		RestartCount uint32
 		Env          struct {
-			Name        string `yaml:"Name"`
-			Package     string `yaml:"Package"`
-			ActionFatal bool   `yaml:"ActionFatal"`
-			IP          string `yaml:"IP,omitempty"`
-			Interval    int    `yaml:"Interval"`
-			Path        string `yaml:"Path,omitempty"`
-			Port        int    `yaml:"Port,omitempty"`
-			RequestType string `yaml:"RequestType"`
-			Response    string `yaml:"Response,omitempty"`
-			Retries     int    `yaml:"Retries"`
-			RetryDelay  int    `yaml:"RetryDelay"`
+			Name            string `yaml:"Name"`
+			Package         string `yaml:"Package"`
+			ActionFatal     bool   `yaml:"ActionFatal"`
+			IP              string `yaml:"IP,omitempty"`
+			Interval        int    `yaml:"Interval"`
+			Path            string `yaml:"Path,omitempty"`
+			Port            int    `yaml:"Port,omitempty"`
+			RequestType     string `yaml:"RequestType,omitempty"`
+			Response        string `yaml:"Response,omitempty"`
+			Retries         int    `yaml:"Retries"`
+			RetryDelay      int    `yaml:"RetryDelay"`
+			RecoveryDelay   int    `yaml:"RecoveryDelay"`
+			ProtocolTimeout int    `yaml:"ProtocolTimeout"`
 		} `yaml:"Env"`
 	}
 )
 
 var (
-	// Confs Array of Liveness monitor configuration Probes
-	Confs []*Conf
+	// Confs Array of Liveness monitor configuration Probe
+	Confs = make(map[string]*Conf)
 )
 
 // Run launch specified client timer
@@ -65,34 +69,23 @@ func New() *Conf {
 	return new(Conf)
 }
 
-// Exist checks an entry already exists and returnthe index and entry
-func Exist(Name string) (int, bool) {
-	for pos, conf := range Confs {
-		if conf.Env.Name == Name {
-			return pos, true
+func isDockerNormlize(conf *Conf) error {
+	if strings.EqualFold("docker", conf.Env.Package) {
+		if net.ParseIP(conf.Env.IP) == nil {
+			if host := os.Getenv("DOCKER_HOST"); host != "" {
+				conf.Env.IP = host
+			} else {
+				conf.Env.IP = client.DefaultDockerHost
+			}
+			if conf.Env.Port == 0 {
+				conf.Env.Port = 2375
+			}
 		}
 	}
-	return -1, false
+	return nil
 }
 
-// IsNormalize ensure conf consistency
-func IsNormalize(conf *Conf) error {
-	if conf.Env.Name == "" {
-		return errors.New("YAML Name NOT defined")
-	}
-	if conf.Env.Package == "" {
-		return errors.New("YAML Package NOT defined")
-	}
-	if !(conf.Env.Retries >= 3 && conf.Env.Retries <= 10) {
-		return errors.New("YAML Retries out-of-range")
-	}
-	if !(conf.Env.Interval >= 5 && conf.Env.Interval <= 59) {
-		return errors.New("YAML Interval out-of-range")
-	}
-
-	if !(conf.Env.RetryDelay >= 5 && conf.Env.RetryDelay <= 30) {
-		return errors.New("YAML RetryDelay out-of-range")
-	}
+func isHTTPNormalize(conf *Conf) error {
 	if strings.EqualFold("http", conf.Env.Package) {
 		if net.ParseIP(conf.Env.IP) == nil {
 			return errors.New("YAML IP address out-of-bound")
@@ -100,6 +93,49 @@ func IsNormalize(conf *Conf) error {
 		if conf.Env.Port == 0 || conf.Env.Path == "" {
 			return errors.New("YAML Port or Path missing")
 		}
+		if conf.Env.RequestType == "" {
+			return errors.New("YAML Request Typpe must be specified")
+		}
+	}
+	return nil
+}
+
+// IsNormalize ensure conf consistency
+func IsNormalize(conf *Conf) error {
+	if conf.Env.Name == "" {
+		return errors.New("YAML Name NOT defined")
+	}
+
+	if conf.Env.Package == "" {
+		return errors.New("YAML Package NOT defined")
+	}
+
+	if !(conf.Env.Retries >= 3 && conf.Env.Retries <= 10) {
+		return errors.New("YAML Retries out-of-range")
+	}
+
+	if !(conf.Env.Interval >= 5 && conf.Env.Interval <= 300) {
+		return errors.New("YAML Interval out-of-range")
+	}
+
+	if !(conf.Env.RetryDelay >= 5 && conf.Env.RetryDelay <= 120) {
+		return errors.New("YAML RetryDelay out-of-range")
+	}
+
+	if !(conf.Env.RecoveryDelay >= 10 && conf.Env.RecoveryDelay <= 300) {
+		return errors.New("YAML RecoveryDelay out-of-range")
+	}
+
+	if !(conf.Env.ProtocolTimeout >= 2 && conf.Env.ProtocolTimeout <= 300) {
+		return errors.New("YAML ProtocolTimeout out-of-range")
+	}
+
+	if err := isDockerNormlize(conf); err != nil {
+		return err
+	}
+
+	if err := isHTTPNormalize(conf); err != nil {
+		return err
 	}
 	return nil
 }
@@ -114,10 +150,10 @@ func Unmarshal(b []byte) (err error) {
 				logger.Err(err.Error())
 				panic(err)
 			}
-			if pos, ok := Exist(conf.Env.Name); !ok {
-				Confs = append(Confs, conf)
+			if Confs[conf.Env.Name] == nil {
+				Confs[conf.Env.Name] = conf
 			} else {
-				Confs[pos].Env = conf.Env
+				Confs[conf.Env.Name].Env = conf.Env
 			}
 			continue
 		}
