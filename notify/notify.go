@@ -63,7 +63,7 @@ func SdNotify(unsetEnvironment bool, state string) (bool, error) {
 	return true, nil
 }
 
-// SdWatchdogEnabled retrieves watchdog timer
+// SdWatchdogEnabled retrieves watchdog environment variable
 func SdWatchdogEnabled(unsetEnvironment bool) (int, error) {
 	wusec := os.Getenv("WATCHDOG_USEC")
 	wpid := os.Getenv("WATCHDOG_PID")
@@ -82,33 +82,34 @@ func SdWatchdogEnabled(unsetEnvironment bool) (int, error) {
 	}
 
 	if wusec == "" {
+		logger.Info("Watchdog Timer NOT defined, Watchdog Timer will NOT be used.")
 		return 0, nil
 	}
 
 	s, err := strconv.Atoi(wusec)
 	if err != nil {
-		err := fmt.Errorf("error converting WATCHDOG_USEC: %s", err)
+		err := fmt.Errorf("Watchdog Timer NOT be used, error converting WATCHDOG_USEC: %s", err)
 		logger.Err(err.Error())
 		return 0, err
 	}
 
 	if s <= 0 {
-		err := fmt.Errorf("error WATCHDOG_USEC must be a positive number")
+		err := fmt.Errorf("Watchdog timer NOT used, error WATCHDOG_USEC must be a positive number")
 		logger.Err(err.Error())
 		return 0, err
 	}
 
-	interval := s / 2
+	interval := s / 3
 
 	if wpid != "" {
-
 		p, err := strconv.Atoi(wpid)
 		if err != nil {
-			return 0, fmt.Errorf("error converting WATCHDOG_PID: %s", err)
+			logger.Err(fmt.Errorf("Watchdog Timer NOT be used,  error converting WATCHDOG_PID: %s ", err).Error())
+			return 0, err
 		}
 
 		if os.Getpid() != p {
-			err := fmt.Errorf("error converting WATCHDOG_PID: %s", err)
+			err := fmt.Errorf("Watchdog Timer NOT be used. error converting WATCHDOG_PID: %s", err)
 			logger.Err(err.Error())
 			return 0, err
 		}
