@@ -162,11 +162,27 @@ type Method interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// recoveryDelayTimer initiate Recovery Delay timer allow service to recover
+func recoveryDelayTimer(conf *conf.Conf) {
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.RecoveryDelay),
+		timer.Type(HTTPTimerType),
+		timer.SubType(httpTimerWait),
+		timer.User(conf),
+	)
+	logger.Info(
+		fmt.Sprintf("Service %s Probe Delayed %d secs, allowance recovery of resources.",
+			conf.Env.Name,
+			conf.Env.RecoveryDelay),
+	)
+}
+
 // bounceService running http daemon
 func bounceService(conf *conf.Conf) {
 	if !conf.Env.ActionFatal {
 		resetCounter(conf)
-		armTimer(conf)
+		recoveryDelayTimer(conf)
 	} else {
 		cmd := exec.Command("systemctl", "restart", "kubelet")
 		var out bytes.Buffer
@@ -186,21 +202,34 @@ func bounceService(conf *conf.Conf) {
 				))
 			}
 			metric.IncrementRestartCount()
-			timer.Launch(
-				timer.Name(conf.Env.Name),
-				timer.Timeout(conf.Env.Interval),
-				timer.Type(HTTPTimerType),
-				timer.SubType(httpTimerWait),
-				timer.User(conf),
-			)
+			recoveryDelayTimer(conf)
 		}
 	}
 }
 
-// serviceRestart Check whether service needs restarting
+// retryServiceTimer initiates timer to retry probe
+func retryServiceTimer(conf *conf.Conf) {
+	timer.Launch(
+		timer.Name(conf.Env.Name),
+		timer.Timeout(conf.Env.Interval),
+		timer.Type(HTTPTimerType),
+		timer.SubType(httpTimerRetry),
+		timer.User(conf),
+	)
+	logger.Info(fmt.Sprintf(
+		"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
+		conf.Env.Name,
+		conf.Env.Package,
+		conf.RetryCounter,
+		conf.Env.Retries,
+	))
+}
+
+// restartService Check whether service needs restarting
 func restartService(conf *conf.Conf) {
-	incCounter(conf)
-	if conf.RetryCounter > conf.Env.Retries {
+	if incCounter(conf) <= conf.Env.Retries {
+		retryServiceTimer(conf)
+	} else {
 		logger.Warning(fmt.Sprintf(
 			"Bouncing %s Service %s Exceeded Retry attempts Cur: %d Max: %d",
 			conf.Env.Name,
@@ -210,21 +239,6 @@ func restartService(conf *conf.Conf) {
 		))
 		resetCounter(conf)
 		bounceService(conf)
-	} else {
-		timer.Launch(
-			timer.Name(conf.Env.Name),
-			timer.Timeout(conf.Env.Interval),
-			timer.Type(HTTPTimerType),
-			timer.SubType(httpTimerRetry),
-			timer.User(conf),
-		)
-		logger.Info(fmt.Sprintf(
-			"Retrying Probe %s Service %s attempts Cur: %d Max: %d",
-			conf.Env.Name,
-			conf.Env.Package,
-			conf.RetryCounter,
-			conf.Env.Retries,
-		))
 	}
 }
 
@@ -248,7 +262,7 @@ func (p ProbeHTTP) Client(conf *conf.Conf) (err error) {
 			conf.Env.Path),
 		strings.ToLower(conf.Env.Package),
 		&http.Client{
-			Timeout:       time.Duration(conf.Env.Interval/2) * time.Second,
+			Timeout:       time.Duration(conf.Env.ProtocolTimeout) * time.Second,
 			Transport:     p.transport,
 			CheckRedirect: redirects(p.followNonLocalRedirects),
 		},
@@ -267,16 +281,16 @@ func ProbeURL(url *url.URL, method string, client Method, response string) error
 
 	res, err := client.Do(req)
 	if err != nil {
-		if !strings.Contains(err.Error(), "connection refused") {
-			logger.Info(err.Error())
+		if !strings.Contains(strings.ToLower(err.Error()), "connection refused") {
+			logger.Warning(err.Error())
 		}
 		return err
 	}
 
 	defer res.Body.Close()
 
-	if !strings.Contains(res.Status, response) {
-		err := fmt.Errorf(res.Status)
+	if !strings.Contains(strings.ToLower(res.Status), strings.ToLower(response)) {
+		err := fmt.Errorf("Response NOT matching failure: " + res.Status)
 		logger.Info(err.Error())
 		return err
 	}
@@ -317,8 +331,9 @@ func resetCounter(conf *conf.Conf) {
 	conf.RetryCounter = 0
 }
 
-func incCounter(conf *conf.Conf) {
+func incCounter(conf *conf.Conf) int {
 	conf.RetryCounter++
+	return conf.RetryCounter
 }
 
 // textedStatus check error text
@@ -331,7 +346,7 @@ func textedStatus(err error) bool {
 
 // Probe specified HTTP endpoint
 func Probe(tle *timer.TLE) {
-	conf, _ := tle.User.(*conf.Conf)
+	conf, _ := tle.User.(*conf.Conf)	
 	p := New(false)
 	if err := p.Client(conf); err == nil {
 		metric.SetKubeletMetric(1)
