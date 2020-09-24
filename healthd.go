@@ -56,10 +56,7 @@ func init() {
 // Setup watch watchdog timer
 func init() {
 	interval, err := daemon.SdWatchdogEnabled(false)
-	if err != nil {
-		logger.Err(err.Error())
-		panic(err)
-	} else {
+	if err == nil {
 		timer.Launch(
 			timer.Name(watchdogName),
 			timer.Timeout(int(interval)),
@@ -92,9 +89,7 @@ func init() {
 		daemonChan,
 		syscall.SIGHUP,
 		syscall.SIGQUIT,
-		syscall.SIGABRT,
 		syscall.SIGTERM,
-		syscall.SIGKILL,
 	)
 
 	go func() {
@@ -116,12 +111,6 @@ func init() {
 					panic("SIGQUIT paniced process")
 				}
 
-			case syscall.SIGABRT:
-			case syscall.SIGKILL:
-				{
-					daemon.SdNotify(false, daemon.SdNotifyStopping)
-					os.Exit(1)
-				}
 			case syscall.SIGTERM:
 				{
 					daemon.SdNotify(false, daemon.SdNotifyStopping)
