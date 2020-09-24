@@ -1,0 +1,27 @@
+Env:
+    Name: Docker
+    Package: docker
+    ActionFatal: true
+    Interval: 10
+    RequestType: HEAD
+    Response: 200
+    Retries: 3
+    RetryDelay: 5
+    RecoveryDelay: 120
+    ProtocolTimeout: 3
+---
+Env:
+    Name: Kubelet
+    Package: http
+    ActionFatal: true
+    IP: "127.0.0.1"
+    Interval: 10
+    Path: /healthz
+    Port: 10248
+    RequestType: HEAD
+    Response: 200
+    Retries: 3
+    RetryDelay: 5
+    RecoveryDelay: 120
+    ProtocolTimeout: 3
+
